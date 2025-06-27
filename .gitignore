@@ -1,4 +1,7 @@
-# Environment files
+# Environment files to ignore
+# These files often contain sensitive information like API keys and should not be committed to version control.
+# It's a good practice to keep them out of the repository.
+# They can be recreated or are specific to the local environment.
 .env
 *.env
 .venv/
