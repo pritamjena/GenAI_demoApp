@@ -10,8 +10,11 @@ import os
 
 # Load env variables
 load_dotenv()
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
-os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY")
+## Langsmith Tracking
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"]=os.getenv("LANGCHAIN_API_KEY")
+os.environ["LANGCHAIN_ENDPOINT"]=os.getenv("LANGCHAIN_ENDPOINT")
+os.environ["LANGCHAIN_PROJECT"]=os.getenv("LANGCHAIN_PROJECT")
 
 # Streamlit UI
 st.title("🌐 AI News Agent")
@@ -36,9 +39,6 @@ tools = [
 tool_names = ", ".join([tool.name for tool in tools])
 tools_string = "\n".join([f"{tool.name}: {tool.description}" for tool in tools])  # 🛠️ THIS IS THE FIX
 
-print(f" tool name is {tools}")
-print(f" tool names are {tool_names}")
-print(f" tools string is {tools_string}")
 
 # Prompt Template for summarization
 CUSTOM_PROMPT="""
@@ -75,7 +75,7 @@ agent = create_react_agent(llm=llm, tools=tools, prompt=prompt)
 agent_executor = AgentExecutor(
     agent=agent,
     tools=tools,
-    # max_iterations=3,
+    # max_iterations=5,
     handle_parsing_errors=True,
     verbose=True,
     # early_stopping_method="generate"
@@ -88,20 +88,19 @@ query = st.text_input("What news would you like to research?", "Latest AI develo
 if st.button("Search"):
     with st.spinner("Thinking..."):
             # Manually supply all template variables required by prompt
-        agent_input = {
+
+
+        result = agent_executor.invoke({
                 "input": query,
                 "tools": tools_string,
                 "tool_names": tool_names,
                 "agent_scratchpad": ""
-            }
-        result = agent_executor.invoke(agent_input)
+            })
 
         st.subheader("🔍 Final Answer")
         st.write(result["output"])
+        
 
-            # with st.expander("🧾 Raw Search Data"):
-            #     raw_data = search.run(query)
-            #     st.write(raw_data)
             
 
 
