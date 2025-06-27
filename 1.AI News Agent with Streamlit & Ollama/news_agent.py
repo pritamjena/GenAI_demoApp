@@ -35,11 +35,9 @@ tools = [
         description="Useful for searching web for current events and news."
     )
 ]
-# tool_names = ", ".join([tool.name for tool in tools])
+
 tool_names = ", ".join([tool.name for tool in tools])
 tools_string = "\n".join([f"{tool.name}: {tool.description}" for tool in tools])  # 🛠️ THIS IS THE FIX
-
-
 # Prompt Template for summarization
 CUSTOM_PROMPT="""
 Answer the following questions as best you can. You have access to the following tools:
@@ -78,7 +76,7 @@ agent_executor = AgentExecutor(
     # max_iterations=5,
     handle_parsing_errors=True,
     verbose=True,
-    # early_stopping_method="generate"
+    early_stopping_method="generate"
 )
 
 
