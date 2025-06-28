@@ -10,6 +10,10 @@ import markdown
 from bs4 import BeautifulSoup
 
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_API_KEY"]=os.getenv("LANGCHAIN_API_KEY")
+os.environ["LANGCHAIN_ENDPOINT"]=os.getenv("LANGCHAIN_ENDPOINT")
+os.environ["LANGCHAIN_PROJECT"]=os.getenv("LANGCHAIN_PROJECT")
 # Step 1: Call the RapidAPI weather endpoint
 def get_weather(city):
     url = "https://open-weather13.p.rapidapi.com/city"
