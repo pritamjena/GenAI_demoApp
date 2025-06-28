@@ -52,7 +52,7 @@ def summarize_deal(deal_data):
 
         Here is the deal data {final_deal} that has title,deal_price,savings,deal_end_str
 
-        Summarise the deals in pointers and deal information shuould be crisp clear without providing lots of information and sorts the suggestion based on savings.
+        Summarise the deals and categorised it if possible in pointers and deal information shuould be crisp clear without providing lots of information and sorts the suggestion based on savings.
         """
     # Use Ollama DeepSeek model to summarize deal info
     model = Ollama(
