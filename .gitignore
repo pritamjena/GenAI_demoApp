@@ -19,3 +19,7 @@ __pycache__/
 
 # Virtual environment
 lg_env/
+
+# Jupyter Notebooks
+*.ipynb
+*.ipynb_checkpoints/
