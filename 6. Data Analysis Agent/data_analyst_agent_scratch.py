@@ -96,8 +96,12 @@ class DuckDbAgentDeepSeek:
 
             # Fallback: remove any markdown or non-SQL text
             sql_content = sql_content.strip()
+            sql_content = sql_content.replace("`", "\"")
 
             self.last_generated_sql = sql_content
+            st.session_state.last_generated_sql = sql_content
+
+            print(f"last gen is{self.last_generated_sql}")
             if not sql_content:
                 return "Error: No SQL code generated."
             print(f"sql_content is {sql_content}")
@@ -116,13 +120,13 @@ class DuckDbAgentDeepSeek:
             return pd.DataFrame({"error": [f"SQL execution error: {str(e)}"]})
 
     def explain_sql(self) -> str:
-        if not self.last_generated_sql:
+        if not st.session_state.get("last_generated_sql"):
             return "No SQL available to explain"
         
         prompt = f"""
         Explain this DuckDB SQL query in simple terms:
         ```sql
-        {self.last_generated_sql}
+        {st.session_state.last_generated_sql}
         ```
         
         Break down:
@@ -130,10 +134,11 @@ class DuckDbAgentDeepSeek:
         2. What operations are performed
         3. What the final result represents
         """
-        
+        print(f"prompt is {prompt}")
         try:
             response = self.model.invoke(prompt)
-            response = response[0]["content"].strip()
+            response = str(response).strip()
+            response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
             return response
         except Exception as e:
             return f"Explanation error: {str(e)}"
@@ -262,14 +267,17 @@ def main():
             if not st.session_state.agent:
                 st.error("Please upload a file first")
                 return
-            if st.session_state.agent.last_generated_sql:
-                with st.spinner("Generating explanation..."):
-                    explanation = st.session_state.agent.explain_sql()
-                    st.session_state.history.insert(0, {
-                        "time": datetime.now().strftime("%H:%M:%S"),
-                        "query": "Explain SQL",
-                        "explanation": explanation
-                    })
+            if not st.session_state.get("last_generated_sql"):
+                st.warning("No SQL query has been generated yet. Please run a query first.")
+                return
+            print(f"last query is {st.session_state.last_generated_sql}")
+            with st.spinner("Generating explanation..."):
+                explanation = st.session_state.agent.explain_sql()
+                st.session_state.history.insert(0, {
+                    "time": datetime.now().strftime("%H:%M:%S"),
+                    "query": "Explain SQL",
+                    "explanation": explanation
+                })
     
     with col2:
         if st.session_state.history:
