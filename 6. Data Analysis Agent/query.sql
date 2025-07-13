@@ -1,0 +1,1 @@
+SELECT * FROM (SELECT explain_key as region ,explain_value as sales FROM uploaded_data_table order by explain_value LIMIT 10) as subquery GROUP BY subquery.region LIMIT 1;
