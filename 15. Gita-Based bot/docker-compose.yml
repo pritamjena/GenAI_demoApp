@@ -1,0 +1,76 @@
+# docker-compose.yml
+
+services:
+  ollama-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama-llm
+    container_name: ollama-llm
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - MODEL=deepseek-r1:1.5b
+    volumes:
+      - ollama_llm_models:/root/.ollama
+    ports:
+      - "11435:11434" # host:container
+    restart: unless-stopped
+
+  streamlit-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: gita-streamlit-ui
+    environment:
+      - OLLAMA_LLM_BASE_URL=http://ollama-llm:11434
+      - OLLAMA_EMBED_BASE_URL=http://ollama-embed:11434
+      - FAISS_INDEX_PATH=/data/vector_store.faiss
+    ports:
+      - "8501:8501"
+    depends_on:
+      - ollama-llm
+      - ollama-embed
+      - api # Wait for API to create FAISS index
+    volumes:
+      - api_data:/data # Share FAISS index with API
+    restart: unless-stopped
+
+  ollama-embed:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama-embed
+    container_name: ollama-embed
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - MODEL=bge-m3:latest
+    volumes:
+      - ollama_embed_models:/root/.ollama
+    ports:
+      - "11436:11434"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: gita-chatbot-api
+    environment:
+      # API points at service DNS names
+      - OLLAMA_LLM_BASE_URL=http://ollama-llm:11434
+      - OLLAMA_EMBED_BASE_URL=http://ollama-embed:11434
+      # Optional: persist FAISS to a volume
+      - FAISS_INDEX_PATH=/data/vector_store.faiss
+    volumes:
+      - api_data:/data
+      # Optionally mount the PDF instead of COPY:
+      # - ./bhagavad-gita-in-english-source-file.pdf:/app/bhagavad-gita-in-english-source-file.pdf:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama-llm
+      - ollama-embed
+    restart: unless-stopped
+
+volumes:
+  ollama_llm_models:
+  ollama_embed_models:
+  api_data:

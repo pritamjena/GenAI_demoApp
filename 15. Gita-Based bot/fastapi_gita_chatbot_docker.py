@@ -1,6 +1,13 @@
+# fastapi_gita_chatbot.py
+
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
-import streamlit as st
+
+from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Sequence
+from contextlib import asynccontextmanager
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -12,26 +19,29 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
-import traceback
-from typing import Sequence, Optional
 from langchain_core.callbacks.manager import Callbacks
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import PrivateAttr, model_validator
 from typing_extensions import Self
-import json
+import traceback
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configuration
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 200
 EMBEDDING_MODEL = "bge-m3:latest"
 LLM_MODEL = "deepseek-r1:1.5b"
-FAISS_INDEX_PATH = os.getenv("FAISS_INDEX_PATH", "vector_store.faiss")
+FAISS_INDEX_PATH = "vector_store.faiss"
 TOP_K_RETRIEVAL = 15
 RERANK_TOP_N = 5
 PDF_PATH = "bhagavad-gita-in-english-source-file.pdf"
 FLASHRANK_CACHE_DIR = os.path.expanduser("~/.cache/flashrank")
 OLLAMA_EMBED_BASE_URL = os.getenv("OLLAMA_EMBED_BASE_URL", "http://ollama-embed:11434")
 OLLAMA_LLM_BASE_URL = os.getenv("OLLAMA_LLM_BASE_URL", "http://ollama-llm:11434")
+
 
 # Q&A Types
 QA_TYPES = {
@@ -43,8 +53,47 @@ QA_TYPES = {
     "Conceptual Understanding": "Understand key concepts like moksha, yoga, and devotion"
 }
 
+# Pydantic Models for Request and Response
+class QuestionRequest(BaseModel):
+    """Request model for Gita questions"""
+    question: str = Field(..., description="The question to ask the Bhagavad Gita", min_length=5)
+    qa_type: str = Field(..., description="Type of question from available Q&A types")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "question": "What is the meaning of dharma according to Krishna?",
+                "qa_type": "Philosophical Inquiry"
+            }
+        }
+
+class SourceInfo(BaseModel):
+    """Model for source information"""
+    content: str = Field(..., description="Preview of the source content")
+    page: str = Field(..., description="Page number from the PDF")
+    relevance_score: float = Field(..., description="Relevance score from reranking")
+
+class QuestionResponse(BaseModel):
+    """Response model for Gita answers"""
+    response: str = Field(..., description="Answer based on Bhagavad Gita teachings")
+    sources: List[SourceInfo] = Field(..., description="Top source documents used")
+    num_sources: int = Field(..., description="Total number of sources retrieved")
+    qa_type: str = Field(..., description="Type of question asked")
+    cleaned_response: str = Field(..., description="Response with thinking tags removed")
+
+class QATypesResponse(BaseModel):
+    """Response model for available Q&A types"""
+    qa_types: Dict[str, str] = Field(..., description="Dictionary of available Q&A types and descriptions")
+
+class HealthResponse(BaseModel):
+    """Health check response"""
+    status: str
+    message: str
+
+
 # Custom FlashRank Compressor
 class FlashRankCompressor(BaseDocumentCompressor):
+    """Custom document compressor using FlashRank for reranking"""
     model_name: str = Field(default="ms-marco-MiniLM-L-12-v2", description="FlashRank model name")
     top_n: int = Field(default=5, description="Number of top documents to return")
     cache_dir: str = Field(default="./flashrank_cache", description="Cache directory for models")
@@ -63,6 +112,7 @@ class FlashRankCompressor(BaseDocumentCompressor):
     ) -> Sequence[Document]:
         if len(documents) == 0:
             return []
+        
         passages = [
             {
                 "id": i,
@@ -71,9 +121,11 @@ class FlashRankCompressor(BaseDocumentCompressor):
             }
             for i, doc in enumerate(documents)
         ]
+        
         rerank_request = RerankRequest(query=query, passages=passages)
         results = self._ranker.rerank(rerank_request)
         top_results = results[:self.top_n]
+        
         final_results = []
         for r in top_results:
             metadata = r["meta"].copy()
@@ -83,17 +135,13 @@ class FlashRankCompressor(BaseDocumentCompressor):
                 metadata=metadata
             )
             final_results.append(doc)
+        
         return final_results
 
 
 def setup_chain():
     """Initialize and setup the RAG chain with vector store and models."""
-    print(f"Using Docker configuration:")
-    print(f"  - LLM URL: {OLLAMA_LLM_BASE_URL}")
-    print(f"  - Embed URL: {OLLAMA_EMBED_BASE_URL}")
-    print(f"  - FAISS Index: {FAISS_INDEX_PATH}")
-    
-    print("Loading documents...")
+    logger.info("Loading documents...")
     loader = PyPDFLoader(PDF_PATH)
     documents = loader.load()
     
@@ -104,7 +152,7 @@ def setup_chain():
         length_function=len,
     )
     chunks = text_splitter.split_documents(documents)
-    print(f"Created {len(chunks)} chunks")
+    logger.info(f"Created {len(chunks)} chunks")
     
     embeddings = OllamaEmbeddings(
         model=EMBEDDING_MODEL,
@@ -112,18 +160,18 @@ def setup_chain():
     )
     
     if os.path.exists(FAISS_INDEX_PATH):
-        print("Loading existing FAISS index...")
+        logger.info("Loading existing FAISS index...")
         vectorstore = FAISS.load_local(
             FAISS_INDEX_PATH,
             embeddings,
             allow_dangerous_deserialization=True
         )
-        print("FAISS index loaded successfully!")
+        logger.info("FAISS index loaded successfully!")
     else:
-        print("Creating new FAISS index...")
+        logger.info("Creating new FAISS index...")
         vectorstore = FAISS.from_documents(chunks, embeddings)
         vectorstore.save_local(FAISS_INDEX_PATH)
-        print("FAISS index created and saved!")
+        logger.info("FAISS index created and saved!")
     
     llm = OllamaLLM(
         model=LLM_MODEL, 
@@ -207,7 +255,16 @@ def format_docs(docs):
     ])
 
 
-def ask_gita(question: str, qa_type: str, compression_retriever, llm) -> dict:
+def extract_after_think(response: str) -> str:
+    """Extract response after thinking tags from DeepSeek model."""
+    marker = "</think>"
+    idx = response.find(marker)
+    if idx != -1:
+        return response[idx + len(marker):].lstrip()
+    return response
+
+
+async def ask_gita(question: str, qa_type: str, compression_retriever, llm) -> dict:
     """
     Query the Gita with source document tracking and Q&A type-specific processing.
     
@@ -245,8 +302,8 @@ def ask_gita(question: str, qa_type: str, compression_retriever, llm) -> dict:
         sources = [
             {
                 "content": doc.page_content[:150] + "...",
-                "page": doc.metadata.get("page", "Unknown"),
-                "relevance_score": doc.metadata.get("relevance_score", "N/A")
+                "page": str(doc.metadata.get("page", "Unknown")),
+                "relevance_score": float(doc.metadata.get("relevance_score", 0.0))
             }
             for doc in compressed_docs[:3]  # Top 3 sources
         ]
@@ -255,163 +312,151 @@ def ask_gita(question: str, qa_type: str, compression_retriever, llm) -> dict:
             "response": response,
             "sources": sources,
             "num_sources": len(compressed_docs),
-            "qa_type": qa_type
+            "qa_type": qa_type,
+            "cleaned_response": extract_after_think(response)
         }
     except Exception as e:
-        print(traceback.format_exc())
-        error_msg = str(e)
-        
-        # Docker-specific error messages
-        if "ConnectionError" in error_msg or "Failed to connect" in error_msg:
-            error_msg = f"❌ Cannot connect to Ollama services. Please ensure Docker containers are running:\n" \
-                       f"   - LLM Service: {OLLAMA_LLM_BASE_URL}\n" \
-                       f"   - Embed Service: {OLLAMA_EMBED_BASE_URL}\n" \
-                       f"   Run: docker-compose up -d"
-        elif "model not found" in error_msg.lower():
-            error_msg = f"❌ Model not found. Please wait for models to download completely.\n" \
-                       f"   Check logs: docker-compose logs ollama-llm -f"
-        
-        return {"error": error_msg}
-
-
-def extract_after_think(response: str) -> str:
-    """Extract response after thinking tags from DeepSeek model."""
-    marker = "</think>"
-    idx = response.find(marker)
-    if idx != -1:
-        return response[idx + len(marker):].lstrip()
-    return response
-
-
-def setup_streamlit_ui():
-    """Setup the Streamlit user interface."""
-    st.set_page_config(
-        page_title="Bhagavad Gita Chatbot",
-        page_icon="🕉️",
-        layout="wide"
-    )
-    
-    st.title("🕉️ Bhagavad Gita Chatbot")
-    st.markdown("Ask questions about the Bhagavad Gita and receive answers based exclusively on its teachings.")
-    
-    with st.sidebar:
-        st.header("About")
-        st.info(
-            """
-            This chatbot uses **Retrieval Augmented Generation (RAG)** to answer questions 
-            based on the Bhagavad Gita.
-            
-            **Features:**
-            - 🔍 Semantic search with BGE-M3 embeddings
-            - 🎯 FlashRank reranking for improved relevance
-            - 🤖 DeepSeek-R1 8B for response generation
-            - 📄 Source attribution with relevance scores
-            - 🎭 Q&A type-specific responses
-            """
+        logger.error(f"Error in ask_gita: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing question: {str(e)}"
         )
-        
-        st.header("Configuration")
-        st.markdown(f"**Embedding Model:** {EMBEDDING_MODEL}")
-        st.markdown(f"**LLM Model:** {LLM_MODEL}")
-        st.markdown(f"**Chunk Size:** {CHUNK_SIZE}")
-        st.markdown(f"**Top-K Retrieval:** {TOP_K_RETRIEVAL}")
-        st.markdown(f"**Rerank Top-N:** {RERANK_TOP_N}")
-        
-        st.header("🐳 Docker Services")
-        st.markdown(f"**LLM Service:** {OLLAMA_LLM_BASE_URL}")
-        st.markdown(f"**Embed Service:** {OLLAMA_EMBED_BASE_URL}")
-        st.markdown(f"**FAISS Index:** {FAISS_INDEX_PATH}")
-        
-        # Service status indicators
-        st.header("Service Status")
-        try:
-            import requests
-            llm_status = "🟢 Connected" if requests.get(f"{OLLAMA_LLM_BASE_URL}/api/tags", timeout=2).status_code == 200 else "🔴 Disconnected"
-            embed_status = "🟢 Connected" if requests.get(f"{OLLAMA_EMBED_BASE_URL}/api/tags", timeout=2).status_code == 200 else "🔴 Disconnected"
-            st.markdown(f"**LLM Service:** {llm_status}")
-            st.markdown(f"**Embed Service:** {embed_status}")
-        except:
-            st.markdown("**LLM Service:** 🔴 Disconnected")
-            st.markdown("**Embed Service:** 🔴 Disconnected")
-        
-        if st.button("Clear Chat History"):
-            st.session_state.messages = []
-            st.rerun()
 
 
-def main():
-    """Main function to run the Bhagavad Gita chatbot."""
-    # Setup Streamlit UI
-    setup_streamlit_ui()
-    
-    # Initialize the RAG chain
-    with st.spinner("Initializing Gita chatbot..."):
+# Global variables for chain components
+compression_retriever = None
+llm = None
+vectorstore = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize the RAG chain on startup"""
+    global compression_retriever, llm, vectorstore
+    try:
+        logger.info("Initializing Gita chatbot...")
         compression_retriever, llm, vectorstore = setup_chain()
-    
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # Q&A Type Selection
-    st.subheader("Select Question Type")
-    qa_type = st.selectbox(
-        "Choose the type of question you want to ask:",
-        options=list(QA_TYPES.keys()),
-        help="Select the type of question to get more targeted responses"
+        logger.info("Gita chatbot initialized successfully!")
+    except Exception as e:
+        logger.error(f"Failed to initialize chatbot: {traceback.format_exc()}")
+        raise
+    yield
+    # Cleanup code can go here if needed
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Bhagavad Gita Chatbot API",
+    description="API for querying the Bhagavad Gita using RAG with FlashRank reranking",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/", response_model=HealthResponse, tags=["Health"])
+async def root():
+    """Root endpoint for health check"""
+    return HealthResponse(
+        status="healthy",
+        message="Bhagavad Gita Chatbot API is running"
     )
-    st.info(f"**{qa_type}**: {QA_TYPES[qa_type]}")
-    
-    # Question Input
-    user_question = st.text_area(
-        "Ask the Gita your question...",
-        placeholder="Enter your question here...",
-        height=100
+
+
+@app.get("/health", response_model=HealthResponse, tags=["Health"])
+async def health_check():
+    """Health check endpoint"""
+    if compression_retriever is None or llm is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is initializing or unavailable"
+        )
+    return HealthResponse(
+        status="healthy",
+        message="All systems operational"
     )
+
+
+@app.get("/qa-types", response_model=QATypesResponse, tags=["Q&A Types"])
+async def get_qa_types():
+    """Get available Q&A types and their descriptions"""
+    return QATypesResponse(qa_types=QA_TYPES)
+
+
+@app.post("/ask", response_model=QuestionResponse, tags=["Gita Q&A"], status_code=status.HTTP_200_OK)
+async def ask_question(request: QuestionRequest):
+    """
+    Ask a question to the Bhagavad Gita chatbot.
     
-    # Submit Button
-    if st.button("Ask Question", type="primary"):
-        if user_question.strip():
-            with st.spinner("Thinking..."):
-                result = ask_gita(user_question, qa_type, compression_retriever, llm)
-            
-            if "error" in result:
-                st.error(f"Error: {result['error']}")
-            else:
-                # Display response
-                st.subheader("Response")
-                st.write(extract_after_think(result["response"]))
-                
-                # Display Q&A type info
-                st.info(f"**Question Type:** {result['qa_type']}")
-                
-                # Display sources
-                st.subheader(f"Relevant Sources (Top {len(result['sources'])})")
-                for i, source in enumerate(result["sources"], 1):
-                    with st.expander(f"Source {i} (Page {source['page']}, Relevance: {source['relevance_score']:.3f})"):
-                        st.code(source["content"])
-                
-                # Add to chat history
-                st.session_state.messages.append({
-                    "question": user_question,
-                    "response": result["response"],
-                    "qa_type": qa_type,
-                    "sources": result["sources"]
-                })
-        else:
-            st.warning("Please enter a question.")
+    - **question**: The question to ask (minimum 5 characters)
+    - **qa_type**: Type of question (must be one of the available QA types)
     
-    # Display Chat History
-    if st.session_state.messages:
-        st.subheader("Chat History")
-        for i, message in enumerate(reversed(st.session_state.messages[-5:])):  # Show last 5
-            with st.expander(f"Q: {message['question'][:50]}... ({message['qa_type']})"):
-                st.write("**Question:**", message['question'])
-                st.write("**Response:**", extract_after_think(message['response']))
-                st.write("**Type:**", message['qa_type'])
-                if st.button(f"Delete", key=f"delete_{i}"):
-                    st.session_state.messages.pop(-(i+1))
-                    st.rerun()
+    Returns the answer with source documents and relevance scores.
+    """
+    # Validate Q&A type
+    if request.qa_type not in QA_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid qa_type. Must be one of: {list(QA_TYPES.keys())}"
+        )
+    
+    # Check if chatbot is initialized
+    if compression_retriever is None or llm is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chatbot is still initializing. Please try again in a moment."
+        )
+    
+    try:
+        logger.info(f"Processing question: {request.question[:50]}... (Type: {request.qa_type})")
+        result = await ask_gita(request.question, request.qa_type, compression_retriever, llm)
+        
+        return QuestionResponse(
+            response=result["response"],
+            sources=[SourceInfo(**source) for source in result["sources"]],
+            num_sources=result["num_sources"],
+            qa_type=result["qa_type"],
+            cleaned_response=result["cleaned_response"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
+@app.get("/config", tags=["Configuration"])
+async def get_configuration():
+    """Get current chatbot configuration"""
+    return {
+        "embedding_model": EMBEDDING_MODEL,
+        "llm_model": LLM_MODEL,
+        "chunk_size": CHUNK_SIZE,
+        "chunk_overlap": CHUNK_OVERLAP,
+        "top_k_retrieval": TOP_K_RETRIEVAL,
+        "rerank_top_n": RERANK_TOP_N,
+        "pdf_path": PDF_PATH
+    }
 
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(
+        "fastapi_gita_chatbot:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

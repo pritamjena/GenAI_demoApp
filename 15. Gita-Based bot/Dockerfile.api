@@ -1,0 +1,37 @@
+# Dockerfile.api
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# System deps (optional but useful for PDFs)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc curl && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps used by the app
+# Matches imports in the source: fastapi, uvicorn, langchain, faiss, flashrank, pydantic, pypdf, etc.
+RUN pip install --no-cache-dir \
+    fastapi uvicorn[standard] \
+    langchain langchain-community langchain-ollama \
+    faiss-cpu flashrank pydantic typing_extensions \
+    pypdf
+
+# Copy app and data
+# Ensure the module name matches uvicorn target (rename inside image to 'fastapi_gita_chatbot.py')
+COPY fastapi_gita_chatbot_docker.py /app/fastapi_gita_chatbot.py
+# Copy the source PDF if bundling; or mount it via volume in compose
+COPY bhagavad-gita-in-english-source-file.pdf /app/bhagavad-gita-in-english-source-file.pdf
+
+# Expose config for endpoints (overridable via compose)
+ENV OLLAMA_EMBED_BASE_URL=http://ollama-embed:11434 \
+    OLLAMA_LLM_BASE_URL=http://ollama-llm:11434
+
+# Place FAISS index in a writable data dir (mount as volume for persistency)
+ENV FAISS_INDEX_PATH=/data/vector_store.faiss
+RUN mkdir -p /data
+
+EXPOSE 8000
+
+CMD ["uvicorn", "fastapi_gita_chatbot:app", "--host", "0.0.0.0", "--port", "8000"]

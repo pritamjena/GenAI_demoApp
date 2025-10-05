@@ -1,0 +1,10 @@
+# Dockerfile.ollama-llm
+FROM ollama/ollama:latest
+WORKDIR /app
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENV OLLAMA_HOST=0.0.0.0:11434
+# From app config
+ENV MODEL=deepseek-r1:1.5b
+EXPOSE 11434
+ENTRYPOINT ["/entrypoint.sh"]

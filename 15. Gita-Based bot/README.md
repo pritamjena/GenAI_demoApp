@@ -27,6 +27,33 @@ User Query â†’ FastAPI Endpoint â†’ Document Retrieval (FAISS)
 
 ## Installation
 
+### Option 1: Docker Deployment (Recommended)
+
+The easiest way to run the chatbot is using Docker with separate containers for LLM models and the main application.
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd bhagavad-gita-chatbot
+
+# Make scripts executable
+chmod +x docker/*.sh
+
+# Start with Docker
+./docker/start.sh
+```
+
+**Docker Benefits:**
+- ✅ Isolated environments
+- ✅ Pre-configured models
+- ✅ Easy scaling
+- ✅ Production-ready setup
+- ✅ Automatic health checks
+
+See [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) for detailed Docker setup instructions.
+
+### Option 2: Local Installation
+
 ### 1. Clone and Setup
 
 ```bash
@@ -70,16 +97,30 @@ PDF_PATH = "bhagavad-gita-in-english-source-file.pdf"
 
 ## Usage
 
-### Start the Server
+### Docker Deployment (Recommended)
 
 ```bash
-python fastapi_gita_chatbot.py
+# Start all services
+./docker/start.sh
+
+# Or manually
+docker-compose up --build -d
+
+# Check status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
 ```
 
-Or with Uvicorn directly:
+### Local Development
 
 ```bash
-uvicorn fastapi_gita_chatbot:app --reload --host 0.0.0.0 --port 8000
+# Start the server
+python app/fastapi_gita_chatbot.py
+
+# Or with Uvicorn directly
+uvicorn app.fastapi_gita_chatbot:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at `http://localhost:8000`

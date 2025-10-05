@@ -1,0 +1,10 @@
+# Dockerfile.ollama-embed
+FROM ollama/ollama:latest
+WORKDIR /app
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENV OLLAMA_HOST=0.0.0.0:11434
+# From app config
+ENV MODEL=bge-m3:latest
+EXPOSE 11434
+ENTRYPOINT ["/entrypoint.sh"]
